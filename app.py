@@ -1,6 +1,10 @@
-from fastapi import FastAPI, status, Request
+from fastapi import FastAPI, status, Request, BackgroundTasks
 from typing import Optional
 from pydantic import BaseModel, Field
+import logging
+import time
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 class PriceDetails(BaseModel):
     price: float = Field(..., gt=0)
@@ -9,7 +13,7 @@ class PriceDetails(BaseModel):
 
 class Item(BaseModel):
     id: int
-    item_name: str = Field(..., min_length=5)
+    item_name: str = Field(..., min_length=2)
     price: PriceDetails
     description: str | None = None
 
@@ -23,6 +27,16 @@ db = [
 
 app = FastAPI()
 
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logging.info(f"Incoming request= URL: {request.url.path}, Method: {request.method}")
+    response = await call_next(request)
+    logging.info(f"Status= {response.status_code}\n")
+    return response
+
+def notify_admin(id: int):
+    print(f"Email sent to admin for item {id}")
+
 @app.get("/")
 def read_record():
     return db
@@ -33,12 +47,18 @@ def create_record(create: Item):
     return {"message": "Data created successfully", "data": db}
    
 @app.put("/update")
-def update_record(update: Item):
+def update_record(update: Item, background_tasks: BackgroundTasks):
     for x in db:
         if x["id"] == update.id:
             x.update(update.dict()) 
+            background_tasks.add_task(notify_admin, update.id)
             return {"message": "Data updated successfully", "data": db}
     return {"message": f"Item with id {update.id} not found"}
+
+@app.post("/notify/{id}")
+async def notify_endpoint(id: int, background_tasks: BackgroundTasks):
+    background_tasks.add_task(notify_admin, id)
+    return {"status": f"Notification for item {id} scheduled"}
 
 @app.delete("/delete")
 def delete_record(id: int):
